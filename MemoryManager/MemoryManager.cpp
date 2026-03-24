@@ -1,9 +1,12 @@
 #include "MemoryManager.h"
 
+#include <fcntl.h>
 #include <stdint.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
-#include <cassert>
 #include <climits>
+#include <string>
 
 MemoryManager::MemoryManager(unsigned wordSize,
                              std::function<int(int, void*)> allocator)
@@ -21,7 +24,7 @@ void MemoryManager::initialize(size_t sizeInWords) {
 }
 
 void MemoryManager::shutdown() {
-    if (_memoryPreviouslyAllocated()) {
+    if (_isMemoryAllocated()) {
         delete[] static_cast<uint8_t*>(_memBlock);
     }
 }
@@ -99,14 +102,6 @@ void* MemoryManager::allocate(size_t sizeInBytes) {
     return nullptr;
 }
 
-void MemoryManager::setAllocator(std::function<int(int, void*)> allocator) {
-    _allocator = allocator;
-}
-
-unsigned MemoryManager::getWordSize() { return _wordSize; }
-void* MemoryManager::getMemoryStart() { return _memBlock; }
-unsigned MemoryManager::getMemoryLimit() { return _contiguous_mem_size; }
-
 void MemoryManager::free(void* address) {
     // in order to free the block, we must first find it's offset
     // we can do this by checking the metadata for a reserved block
@@ -144,8 +139,45 @@ void MemoryManager::free(void* address) {
     }
 }
 
+void MemoryManager::setAllocator(std::function<int(int, void*)> allocator) {
+    _allocator = allocator;
+}
+
+int MemoryManager::dumpMemoryMap(char* filename) {
+    int fd = open(filename, O_RDWR | O_CREAT | O_TRUNC);
+    if (fd == -1) return -1;
+
+    std::string out;
+    bool first = true;
+
+    for (const Block& b : _metadata) {
+        if (!b.isFree) continue;
+
+        if (!first) {
+            out += " - ";
+        }
+
+        out += "[" + std::to_string(b.offset) + ", " +
+               std::to_string(b.length) + "]";
+
+        first = false;
+    }
+
+    int res = write(fd, out.c_str(), out.size());
+    close(fd);
+
+    return res != -1 ? 0 : -1;
+}
+
+// TODO
+void* MemoryManager::getBitmap() { return nullptr; };
+
+unsigned MemoryManager::getWordSize() { return _wordSize; }
+void* MemoryManager::getMemoryStart() { return _memBlock; }
+unsigned MemoryManager::getMemoryLimit() { return _contiguous_mem_size; }
+
 // helper functions
-bool MemoryManager::_memoryPreviouslyAllocated() {
+bool MemoryManager::_isMemoryAllocated() {
     return static_cast<uint8_t*>(_memBlock) != nullptr;
 }
 
@@ -175,4 +207,27 @@ int bestFit(int sizeInWords, void* list) {
     return bestOffset;
 }
 
-int worstFit(int sizeInWords, void* list) {}
+int worstFit(int sizeInWords, void* list) {
+    if (list == nullptr) {
+        return -1;
+    }
+
+    int* holes = static_cast<int*>(list);
+    int list_size = holes[0];
+
+    int worstOffset = -1;
+    int worstSize = -1;
+
+    int index = 1;
+    for (int i = 0; i < list_size; i++) {
+        int offset = holes[index++];
+        int length = holes[index++];
+
+        if (length >= sizeInWords && length > worstSize) {
+            worstSize = length;
+            worstOffset = offset;
+        }
+    }
+
+    return worstOffset;
+}

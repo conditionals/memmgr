@@ -1,3 +1,5 @@
+#pragma once
+
 #include <functional>
 #include <list>
 
@@ -8,7 +10,7 @@ class MemoryManager {
     std::function<int(int, void*)> _allocator;
     void* _memBlock = nullptr;
 
-    bool _memoryPreviouslyAllocated();
+    bool _isMemoryAllocated();
 
     struct Block {
         size_t offset;
