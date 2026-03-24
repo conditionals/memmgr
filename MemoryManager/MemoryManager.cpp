@@ -21,12 +21,22 @@ void MemoryManager::initialize(size_t sizeInWords) {
     _contiguous_mem_size = sizeInWords * _wordSize;
 
     _memBlock = new uint8_t[_contiguous_mem_size];
+
+    Block base;
+    base.offset = 0;
+    base.length = sizeInWords;
+    base.isFree = true;
+
+    _metadata.push_back(base);
 }
 
 void MemoryManager::shutdown() {
     if (_isMemoryAllocated()) {
         delete[] static_cast<uint8_t*>(_memBlock);
+        _memBlock = nullptr;
     }
+
+    _metadata.clear();
 }
 
 void* MemoryManager::getList() {
@@ -41,7 +51,7 @@ void* MemoryManager::getList() {
     }
 
     int arraySize = 1 + (num_blocks * 2);
-    int* data = new int[arraySize];
+    uint16_t* data = new uint16_t[arraySize];
 
     data[0] = num_blocks;
 
@@ -50,8 +60,8 @@ void* MemoryManager::getList() {
     for (const Block& block : _metadata) {
         if (!block.isFree) continue;
 
-        data[i++] = static_cast<int>(block.offset);
-        data[i++] = static_cast<int>(block.length);
+        data[i++] = static_cast<uint16_t>(block.offset);
+        data[i++] = static_cast<uint16_t>(block.length);
     }
 
     return data;
@@ -62,7 +72,7 @@ void* MemoryManager::allocate(size_t sizeInBytes) {
 
     int sizeInWords = 1 + ((sizeInBytes - 1) / _wordSize);
 
-    int* list = static_cast<int*>(getList());
+    uint16_t* list = static_cast<uint16_t*>(getList());
 
     int wordOffset = _allocator(sizeInWords, list);
 
@@ -169,8 +179,33 @@ int MemoryManager::dumpMemoryMap(char* filename) {
     return res != -1 ? 0 : -1;
 }
 
-// TODO
-void* MemoryManager::getBitmap() { return nullptr; };
+void* MemoryManager::getBitmap() {
+    int num_words = _contiguous_mem_size / _wordSize;
+    int bitmap_words_size = (num_words + 7) / 8;
+    int array_size = 2 + bitmap_words_size;
+
+    uint8_t* bitmap = new uint8_t[array_size]();
+
+    // split into 2-byte integer
+    uint16_t wideSize = bitmap_words_size;
+    bitmap[0] = static_cast<uint8_t>(wideSize & 0xFF);
+    bitmap[1] = static_cast<uint8_t>(wideSize >> 8 & 0xFF);
+
+    for (const Block& b : _metadata) {
+        if (b.isFree) continue;
+
+        // calculate place in bitmap
+        // once we have that loop len as well
+        for (int i = b.offset; i < b.offset + b.length; i++) {
+            int byte_index = i / 8;
+            int bit_index = i % 8;
+
+            bitmap[2 + byte_index] |= (1 << bit_index);
+        }
+    }
+
+    return bitmap;
+};
 
 unsigned MemoryManager::getWordSize() { return _wordSize; }
 void* MemoryManager::getMemoryStart() { return _memBlock; }
@@ -187,7 +222,7 @@ int bestFit(int sizeInWords, void* list) {
         return -1;
     }
 
-    int* holes = static_cast<int*>(list);
+    uint16_t* holes = static_cast<uint16_t*>(list);
     int list_size = holes[0];
 
     int bestOffset = -1;
@@ -212,7 +247,7 @@ int worstFit(int sizeInWords, void* list) {
         return -1;
     }
 
-    int* holes = static_cast<int*>(list);
+    uint16_t* holes = static_cast<uint16_t*>(list);
     int list_size = holes[0];
 
     int worstOffset = -1;
